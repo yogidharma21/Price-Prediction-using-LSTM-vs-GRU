@@ -7,146 +7,140 @@ from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="BTC Price Prediction", layout="wide")
+# =====================
+# Page Config
+# =====================
+st.set_page_config(
+    page_title="Cryptocurrency Price Prediction (GRU)",
+    layout="wide"
+)
 
 # =====================
 # Load Model (cache)
 # =====================
 @st.cache_resource
-def load_gru():
+def load_gru_model():
     return load_model("model_prediction_BTC_GRU.keras")
 
-model = load_gru()
+model = load_gru_model()
 
 # =====================
 # Sidebar Input
 # =====================
-st.sidebar.title("⚙️Setting")
+st.sidebar.title("⚙️ Prediction Settings")
 
-stock = st.sidebar.text_input("Ticker Yahoo Finance", "BTC-USD")
-no_of_days = st.sidebar.slider("Prediksi berapa hari ke depan?", 1, 30, 10)
+ticker = st.sidebar.text_input(
+    "Yahoo Finance Ticker",
+    value="BTC-USD"
+)
+
+forecast_days = st.sidebar.number_input(
+    "Number of days to predict",
+    min_value=1,
+    max_value=1000,
+    value=30,
+    step=1
+)
+
+if forecast_days > 365:
+    st.sidebar.warning(
+        "⚠️ Long-term predictions may accumulate higher errors"
+    )
 
 # =====================
-# Load Data
+# Load Historical Data
 # =====================
 @st.cache_data
 def load_data(ticker):
     end = datetime.now()
     start = datetime(end.year - 10, end.month, end.day)
-    df = yf.download(ticker, start=start, end=end)
-    return df
+    return yf.download(ticker, start=start, end=end)
 
-stock_data = load_data(stock)
+df = load_data(ticker)
 
-st.title(f"📈 {stock} Price Prediction")
+# =====================
+# Title
+# =====================
+st.title("📈 Cryptocurrency Price Prediction using GRU")
+st.caption("Historical data from Yahoo Finance & deep learning-based forecasting")
 
-if stock_data.empty:
-    st.error("Ticker tidak valid atau data kosong")
+if df.empty:
+    st.error("❌ No data found. Please check the ticker symbol.")
     st.stop()
 
 # =====================
-# Plot 1: Closing Price
+# Historical Price Plot
 # =====================
-st.subheader("📊 Harga Penutupan Historis")
+st.subheader("📊 Historical Closing Prices")
 
 fig1, ax1 = plt.subplots(figsize=(12, 5))
-ax1.plot(stock_data['Close'], label='Close Price')
-ax1.set_xlabel("Tanggal")
-ax1.set_ylabel("Harga")
+ax1.plot(df.index, df["Close"], label="Closing Price")
+ax1.set_xlabel("Date")
+ax1.set_ylabel("Price")
 ax1.legend()
 st.pyplot(fig1)
 
 # =====================
 # Data Preparation
 # =====================
-splitting_len = int(len(stock_data) * 0.9)
-x_test = stock_data[['Close']][splitting_len:]
+WINDOW_SIZE = 100
 
+close_prices = df[["Close"]]
 scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_data = scaler.fit_transform(x_test)
+scaled_close = scaler.fit_transform(close_prices)
 
-x_data, y_data = [], []
-for i in range(100, len(scaled_data)):
-    x_data.append(scaled_data[i - 100:i])
-    y_data.append(scaled_data[i])
-
-x_data = np.array(x_data)
-y_data = np.array(y_data)
-
-# =====================
-# Test Prediction
-# =====================
-predictions = model.predict(x_data, verbose=0)
-inv_predictions = scaler.inverse_transform(predictions)
-inv_y_test = scaler.inverse_transform(y_data)
-
-plotting_data = pd.DataFrame(
-    {
-        "Original": inv_y_test.flatten(),
-        "Prediction": inv_predictions.flatten(),
-    },
-    index=x_test.index[100:]
-)
-
-# =====================
-# Plot 2: Original vs Prediction
-# =====================
-st.subheader("🔍 Original vs Prediksi (Test Data)")
-
-fig2, ax2 = plt.subplots(figsize=(12, 5))
-ax2.plot(plotting_data["Original"], label="Original")
-ax2.plot(plotting_data["Prediction"], label="Prediction", linestyle="--")
-ax2.legend()
-ax2.set_xlabel("Tanggal")
-ax2.set_ylabel("Harga")
-st.pyplot(fig2)
-
-st.dataframe(plotting_data.tail())
+last_window = scaled_close[-WINDOW_SIZE:]
+last_window = last_window.reshape(1, WINDOW_SIZE, 1)
 
 # =====================
 # Future Prediction (Recursive)
 # =====================
-st.subheader("🔮 Prediksi Harga Masa Depan")
-
-last_100 = stock_data[['Close']].tail(100)
-last_100_scaled = scaler.transform(last_100)
-last_100_scaled = last_100_scaled.reshape(1, -1, 1)
-
 future_predictions = []
 
-for _ in range(no_of_days):
-    next_day = model.predict(last_100_scaled, verbose=0)
-    future_predictions.append(scaler.inverse_transform(next_day)[0, 0])
+for _ in range(forecast_days):
+    next_pred = model.predict(last_window, verbose=0)
+    future_predictions.append(next_pred[0, 0])
 
-    last_100_scaled = np.append(
-        last_100_scaled[:, 1:, :],
-        next_day.reshape(1, 1, 1),
+    last_window = np.append(
+        last_window[:, 1:, :],
+        next_pred.reshape(1, 1, 1),
         axis=1
     )
 
+future_predictions = scaler.inverse_transform(
+    np.array(future_predictions).reshape(-1, 1)
+).flatten()
+
 future_dates = [
-    stock_data.index[-1] + timedelta(days=i)
-    for i in range(1, no_of_days + 1)
+    df.index[-1] + timedelta(days=i)
+    for i in range(1, forecast_days + 1)
 ]
 
-future_df = pd.DataFrame(
-    {
-        "Date": future_dates,
-        "Predicted Close Price": future_predictions
-    }
+future_df = pd.DataFrame({
+    "Date": future_dates,
+    "Predicted Close Price": future_predictions
+})
+
+# =====================
+# Prediction Plot
+# =====================
+st.subheader("🔮 Future Price Forecast")
+
+fig2, ax2 = plt.subplots(figsize=(12, 5))
+ax2.plot(
+    future_df["Date"],
+    future_df["Predicted Close Price"],
+    marker="o"
 )
+ax2.set_xlabel("Date")
+ax2.set_ylabel("Predicted Price")
+ax2.grid(alpha=0.3)
+st.pyplot(fig2)
 
 # =====================
-# Plot 3: Future Prediction
+# Prediction Table
 # =====================
-fig3, ax3 = plt.subplots(figsize=(12, 5))
-ax3.plot(future_df["Date"], future_df["Predicted Close Price"], marker='o')
-ax3.set_xlabel("Tanggal")
-ax3.set_ylabel("Predicted Price")
-ax3.grid(alpha=0.3)
-st.pyplot(fig3)
-
+st.subheader("📄 Forecast Table")
 st.dataframe(future_df)
 
-st.success("🚀 Prediksi selesai")
-
+st.success("✅ Prediction completed successfully")
