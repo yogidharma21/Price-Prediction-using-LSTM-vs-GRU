@@ -1,146 +1,107 @@
 import streamlit as st
-import pandas as pd
-import numpy as np
 import yfinance as yf
-from tensorflow.keras.models import load_model
-from sklearn.preprocessing import MinMaxScaler
+import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import load_model
 
-# =====================
-# Page Config
-# =====================
-st.set_page_config(
-    page_title="Cryptocurrency Price Prediction (GRU)",
-    layout="wide"
-)
+# ===============================
+# CONFIG
+# ===============================
+st.set_page_config(page_title="Bitcoin Price Prediction", layout="wide")
+st.title("📈 Bitcoin Price Prediction Using GRU")
 
-# =====================
-# Load Model (cache)
-# =====================
-@st.cache_resource
-def load_gru_model():
-    return load_model("model_prediction_BTC_GRU.keras")
+MODEL_PATH = "model_prediction_BTC_GRU.keras"
+LOOKBACK = 60
 
-model = load_gru_model()
+# ===============================
+# LOAD MODEL
+# ===============================
+model = load_model(MODEL_PATH)
 
-# =====================
-# Sidebar Input
-# =====================
-st.sidebar.title("⚙️ Prediction Settings")
-
-ticker = st.sidebar.text_input(
-    "Yahoo Finance Ticker",
-    value="BTC-USD"
-)
-
-forecast_days = st.sidebar.number_input(
-    "Number of days to predict",
+# ===============================
+# USER INPUT
+# ===============================
+days = st.number_input(
+    "Predict how many days ahead?",
     min_value=1,
-    max_value=1000,
-    value=30,
-    step=1
+    max_value=365,
+    value=30
 )
 
-if forecast_days > 365:
-    st.sidebar.warning(
-        "⚠️ Long-term predictions may accumulate higher errors"
-    )
+# ===============================
+# LOAD DATA
+# ===============================
+df = yf.download("BTC-USD", start="2015-01-01")
+df = df[['Close']]
+df.dropna(inplace=True)
 
-# =====================
-# Load Historical Data
-# =====================
-@st.cache_data
-def load_data(ticker):
-    end = datetime.now()
-    start = datetime(end.year - 10, end.month, end.day)
-    return yf.download(ticker, start=start, end=end)
+scaler = MinMaxScaler()
+scaled_data = scaler.fit_transform(df)
 
-df = load_data(ticker)
+# ===============================
+# PREPARE LAST SEQUENCE
+# ===============================
+last_sequence = scaled_data[-LOOKBACK:]
+current_input = last_sequence.reshape(1, LOOKBACK, 1)
 
-# =====================
-# Title
-# =====================
-st.title("📈 Cryptocurrency Price Prediction using GRU")
-st.caption("Historical data from Yahoo Finance & deep learning-based forecasting")
+predictions = []
 
-if df.empty:
-    st.error("❌ No data found. Please check the ticker symbol.")
-    st.stop()
+# ===============================
+# PREDICTION LOOP
+# ===============================
+for _ in range(days):
+    pred = model.predict(current_input, verbose=0)
+    predictions.append(pred[0, 0])
 
-# =====================
-# Historical Price Plot
-# =====================
-st.subheader("📊 Historical Closing Prices")
-
-fig1, ax1 = plt.subplots(figsize=(12, 5))
-ax1.plot(df.index, df["Close"], label="Closing Price")
-ax1.set_xlabel("Date")
-ax1.set_ylabel("Price")
-ax1.legend()
-st.pyplot(fig1)
-
-# =====================
-# Data Preparation
-# =====================
-WINDOW_SIZE = 100
-
-close_prices = df[["Close"]]
-scaler = MinMaxScaler(feature_range=(0, 1))
-scaled_close = scaler.fit_transform(close_prices)
-
-last_window = scaled_close[-WINDOW_SIZE:]
-last_window = last_window.reshape(1, WINDOW_SIZE, 1)
-
-# =====================
-# Future Prediction (Recursive)
-# =====================
-future_predictions = []
-
-for _ in range(forecast_days):
-    next_pred = model.predict(last_window, verbose=0)
-    future_predictions.append(next_pred[0, 0])
-
-    last_window = np.append(
-        last_window[:, 1:, :],
-        next_pred.reshape(1, 1, 1),
+    current_input = np.append(
+        current_input[:, 1:, :],
+        pred.reshape(1, 1, 1),
         axis=1
     )
 
-future_predictions = scaler.inverse_transform(
-    np.array(future_predictions).reshape(-1, 1)
-).flatten()
-
-future_dates = [
-    df.index[-1] + timedelta(days=i)
-    for i in range(1, forecast_days + 1)
-]
-
-future_df = pd.DataFrame({
-    "Date": future_dates,
-    "Predicted Close Price": future_predictions
-})
-
-# =====================
-# Prediction Plot
-# =====================
-st.subheader("🔮 Future Price Forecast")
-
-fig2, ax2 = plt.subplots(figsize=(12, 5))
-ax2.plot(
-    future_df["Date"],
-    future_df["Predicted Close Price"],
-    marker="o"
+# ===============================
+# INVERSE SCALE
+# ===============================
+predictions = scaler.inverse_transform(
+    np.array(predictions).reshape(-1, 1)
 )
-ax2.set_xlabel("Date")
-ax2.set_ylabel("Predicted Price")
-ax2.grid(alpha=0.3)
-st.pyplot(fig2)
 
-# =====================
-# Prediction Table
-# =====================
-st.subheader("📄 Forecast Table")
-st.dataframe(future_df)
+future_dates = pd.date_range(
+    start=df.index[-1] + pd.Timedelta(days=1),
+    periods=days
+)
 
-st.success("✅ Prediction completed successfully")
+prediction_df = pd.DataFrame(
+    predictions,
+    index=future_dates,
+    columns=["Predicted Price"]
+)
+
+# ===============================
+# LIMIT HISTORICAL DATA (3x prediction window)
+# ===============================
+window = days * 3
+df_plot = df.tail(window)
+
+# ===============================
+# PLOT
+# ===============================
+st.subheader("📊 Price Prediction Chart")
+
+fig, ax = plt.subplots(figsize=(12, 5))
+ax.plot(df_plot.index, df_plot['Close'], label="Historical Price")
+ax.plot(prediction_df.index, prediction_df["Predicted Price"],
+        label="Prediction", color="red")
+
+ax.set_xlabel("Date")
+ax.set_ylabel("Price (USD)")
+ax.legend()
+st.pyplot(fig)
+
+# ===============================
+# TABLE
+# ===============================
+st.subheader("📋 Prediction Table")
+st.dataframe(prediction_df.style.format("${:,.2f}"))
