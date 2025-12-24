@@ -7,21 +7,21 @@ from sklearn.preprocessing import MinMaxScaler
 import matplotlib.pyplot as plt
 from datetime import datetime, timedelta
 
-st.set_page_config(page_title="Stock Price Prediction", layout="wide")
+st.set_page_config(page_title="BTC Price Prediction", layout="wide")
 
 # =====================
 # Load Model (cache)
 # =====================
 @st.cache_resource
-def load_lstm():
-    return load_model("model.keras")
+def load_gru():
+    return load_model("model_prediction_BTC_GRU.keras")
 
-model = load_lstm()
+model = load_gru()
 
 # =====================
 # Sidebar Input
 # =====================
-st.sidebar.title("⚙️ Pengaturan")
+st.sidebar.title("⚙️Setting")
 
 stock = st.sidebar.text_input("Ticker Yahoo Finance", "BTC-USD")
 no_of_days = st.sidebar.slider("Prediksi berapa hari ke depan?", 1, 30, 10)
@@ -149,3 +149,4 @@ st.pyplot(fig3)
 st.dataframe(future_df)
 
 st.success("🚀 Prediksi selesai")
+
