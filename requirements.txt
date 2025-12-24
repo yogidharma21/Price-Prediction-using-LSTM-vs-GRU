@@ -3,4 +3,5 @@ yfinance
 pandas
 numpy
 matplotlib
-tensorflow-cpu
+scikit-learn
+tensorflow-cpu==2.15.0
